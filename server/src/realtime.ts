@@ -1,5 +1,6 @@
 import type { Server as HttpServer } from "node:http";
 import { Server, type Socket } from "socket.io";
+import { z } from "zod";
 import { verifyToken } from "./auth.ts";
 import { all } from "./db.ts";
 import { addSocket, removeSocket } from "./presence.ts";
@@ -17,6 +18,16 @@ interface VoiceMember {
 // channelId -> (socketId -> участник)
 const voice = new Map<string, Map<string, VoiceMember>>();
 const socketVoice = new Map<string, string>();
+const channelPayload = z.object({ channelId: z.string().min(1).max(64) });
+const voiceStatePayload = z.object({ muted: z.boolean().optional(), deafened: z.boolean().optional() });
+const signalPayload = z.object({
+  to: z.string().min(1).max(128),
+  data: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("offer"), sdp: z.string().max(200_000) }),
+    z.object({ type: z.literal("answer"), sdp: z.string().max(200_000) }),
+    z.object({ type: z.literal("ice"), candidate: z.object({ candidate: z.string().max(8_000), sdpMid: z.string().nullable().optional(), sdpMLineIndex: z.number().int().nullable().optional(), usernameFragment: z.string().optional() }) }),
+  ]),
+});
 
 export function emitToServer(serverId: string, event: string, data: unknown) {
   io.to(`server:${serverId}`).emit(event, data);
@@ -154,24 +165,28 @@ export function setupRealtime(http: HttpServer) {
 
     if (addSocket(userId)) broadcastPresence(userId, true);
 
-    socket.on("typing", ({ channelId }: { channelId: string }) => {
-      const c = getChannelSafe(String(channelId));
+    socket.on("typing", (payload: unknown) => {
+      const parsed = channelPayload.safeParse(payload);
+      if (!parsed.success) return;
+      const c = getChannelSafe(parsed.data.channelId);
       if (!c) return;
       const allowed =
         c.type === "dm"
           ? dmParticipants(c.id).includes(userId)
           : !!c.server_id && !!memberRole(c.server_id, userId);
       if (!allowed) return;
-      const payload = { channelId: c.id, userId };
+      const event = { channelId: c.id, userId };
       if (c.type === "dm")
-        socket.to(dmParticipants(c.id).map((id) => `user:${id}`)).emit("typing", payload);
-      else socket.to(`server:${c.server_id}`).emit("typing", payload);
+        socket.to(dmParticipants(c.id).map((id) => `user:${id}`)).emit("typing", event);
+      else socket.to(`server:${c.server_id}`).emit("typing", event);
     });
 
-    socket.on("voice:join", ({ channelId }: { channelId: string }, ack?: Function) => {
-      const c = getChannelSafe(String(channelId));
+    socket.on("voice:join", (payload: unknown, ack?: unknown) => {
+      const parsed = channelPayload.safeParse(payload);
+      const acknowledge = typeof ack === "function" ? ack as (result: unknown) => void : undefined;
+      const c = parsed.success ? getChannelSafe(parsed.data.channelId) : null;
       if (!c || c.type !== "voice" || !c.server_id || !memberRole(c.server_id, userId)) {
-        ack?.({ error: "Нет доступа к каналу" });
+        acknowledge?.({ error: "Нет доступа к каналу" });
         return;
       }
       leaveVoice(socket.id);
@@ -181,26 +196,31 @@ export function setupRealtime(http: HttpServer) {
       voice.set(c.id, members);
       socketVoice.set(socket.id, c.id);
       socket.join(`voice:${c.id}`);
-      ack?.({ selfSocketId: socket.id, peers });
+      acknowledge?.({ selfSocketId: socket.id, peers });
       broadcastVoice(c.id);
     });
 
     socket.on("voice:leave", () => leaveVoice(socket.id));
 
-    socket.on("voice:update", (state: { muted?: boolean; deafened?: boolean }) => {
+    socket.on("voice:update", (payload: unknown) => {
+      const parsed = voiceStatePayload.safeParse(payload);
+      if (!parsed.success) return;
       const channelId = socketVoice.get(socket.id);
       const me = channelId && voice.get(channelId)?.get(socket.id);
       if (!me) return;
-      me.muted = !!state.muted;
-      me.deafened = !!state.deafened;
+      me.muted = !!parsed.data.muted;
+      me.deafened = !!parsed.data.deafened;
       broadcastVoice(channelId);
     });
 
     // Пересылка SDP/ICE между участниками одного голосового канала.
-    socket.on("voice:signal", ({ to, data }: { to: string; data: unknown }) => {
+    socket.on("voice:signal", (payload: unknown) => {
+      const parsed = signalPayload.safeParse(payload);
+      if (!parsed.success) return;
+      const { to, data } = parsed.data;
       const channelId = socketVoice.get(socket.id);
-      if (!channelId || socketVoice.get(String(to)) !== channelId) return;
-      io.to(String(to)).emit("voice:signal", { from: socket.id, userId, data });
+      if (!channelId || socketVoice.get(to) !== channelId) return;
+      io.to(to).emit("voice:signal", { from: socket.id, userId, data });
     });
 
     socket.on("disconnect", () => {

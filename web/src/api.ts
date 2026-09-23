@@ -72,4 +72,5 @@ export function uploadFile(file: File, onProgress?: (p: number) => void): Promis
   });
 }
 
-export const fileUrl = (url: string | null | undefined) => (url ? API_BASE + url : undefined);
+export const fileUrl = (url: string | null | undefined) =>
+  url ? API_BASE + url + (url.startsWith("/uploads/") ? "?v=2" : "") : undefined;

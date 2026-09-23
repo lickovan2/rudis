@@ -77,6 +77,21 @@ CREATE TABLE IF NOT EXISTS reactions (
   PRIMARY KEY (message_id, user_id, emoji)
 );
 
+CREATE TABLE IF NOT EXISTS uploads (
+  url TEXT PRIMARY KEY,
+  uploader_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  size INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS uploads_uploader ON uploads(uploader_id);
+
+CREATE TABLE IF NOT EXISTS message_uploads (
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  PRIMARY KEY (message_id, url)
+);
+CREATE INDEX IF NOT EXISTS message_uploads_url ON message_uploads(url);
+
 CREATE TABLE IF NOT EXISTS invites (
   code TEXT PRIMARY KEY,
   server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
@@ -94,6 +109,12 @@ CREATE TABLE IF NOT EXISTS friendships (
   PRIMARY KEY (requester_id, addressee_id)
 );
 `);
+
+// Populate the lookup for installations that already have attachments.
+db.exec(`INSERT OR IGNORE INTO message_uploads (message_id, url)
+  SELECT m.id, json_extract(a.value, '$.url')
+  FROM messages m, json_each(m.attachments) a
+  WHERE json_valid(m.attachments) AND json_type(a.value, '$.url') = 'text'`);
 
 /**
  * Ключ логина для сравнения без учёта регистра. COLLATE NOCASE в SQLite понимает только латиницу,

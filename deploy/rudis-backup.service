@@ -1,0 +1,6 @@
+[Unit]
+Description=Backup RUdis data
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/rudis/app/scripts/backup.sh

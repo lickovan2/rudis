@@ -458,6 +458,7 @@ export async function login(token: string) {
 }
 
 export function logout() {
+  void api("POST", "/api/auth/logout").catch(() => {});
   setToken(null);
   disconnectSocket();
   set({

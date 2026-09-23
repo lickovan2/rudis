@@ -1,12 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { checkPassword, hashPassword, requireAuth, signToken } from "../auth.ts";
+import { checkPassword, clearMediaCookie, hashPassword, requireAuth, setMediaCookie, signToken } from "../auth.ts";
 import { one, run, usernameKey } from "../db.ts";
 import { HttpError } from "../errors.ts";
 import { newId } from "../ids.ts";
 import { getUser, publicUser, type UserRow } from "../access.ts";
 import { emitToAudience } from "../realtime.ts";
 import { parse } from "../validate.ts";
+import { rateLimit } from "../rate-limit.ts";
+import { assertOwnedUpload } from "./uploads.ts";
 
 export const uploadUrl = z.string().regex(/^\/uploads\/[\w.-]+$/, "Неверная ссылка на файл");
 
@@ -21,7 +23,8 @@ const credentials = z.object({
 });
 
 export default async function authRoutes(app: FastifyInstance) {
-  app.post("/api/auth/register", async (req) => {
+  app.post("/api/auth/register", async (req, reply) => {
+    rateLimit(`register:${req.ip}`, 10, 60 * 60_000);
     const body = parse(
       credentials.extend({ displayName: z.string().trim().max(32).optional() }),
       req.body,
@@ -38,21 +41,35 @@ export default async function authRoutes(app: FastifyInstance) {
       await hashPassword(body.password),
       Date.now(),
     );
-    return { token: signToken(id), user: getUser(id) };
+    const token = signToken(id);
+    setMediaCookie(req, reply, token);
+    return { token, user: getUser(id) };
   });
 
-  app.post("/api/auth/login", async (req) => {
-    const body = parse(z.object({ username: z.string(), password: z.string() }), req.body);
+  app.post("/api/auth/login", async (req, reply) => {
+    const body = parse(z.object({ username: z.string().min(1).max(33), password: z.string().min(1).max(128) }), req.body);
+    rateLimit(`login:ip:${req.ip}`, 60, 60_000);
+    rateLimit(`login:name:${usernameKey(body.username.replace(/^@/, ""))}`, 10, 60_000);
     const u = one<UserRow & { password_hash: string }>(
       "SELECT * FROM users WHERE username_key = ?",
       usernameKey(body.username.replace(/^@/, "")),
     );
     if (!u || !(await checkPassword(body.password, u.password_hash)))
       throw new HttpError(401, "Неверный логин или пароль");
-    return { token: signToken(u.id), user: publicUser(u) };
+    const token = signToken(u.id);
+    setMediaCookie(req, reply, token);
+    return { token, user: publicUser(u) };
   });
 
-  app.get("/api/me", { preHandler: requireAuth }, async (req) => getUser(req.userId));
+  app.get("/api/me", { preHandler: requireAuth }, async (req, reply) => {
+    setMediaCookie(req, reply, req.headers.authorization!.slice(7));
+    return getUser(req.userId);
+  });
+
+  app.post("/api/auth/logout", async (req, reply) => {
+    clearMediaCookie(req, reply);
+    return { ok: true };
+  });
 
   app.patch("/api/me", { preHandler: requireAuth }, async (req) => {
     const body = parse(
@@ -65,6 +82,8 @@ export default async function authRoutes(app: FastifyInstance) {
     );
     if (body.displayName !== undefined)
       run("UPDATE users SET display_name = ? WHERE id = ?", body.displayName, req.userId);
+    if (body.avatar !== undefined)
+      assertOwnedUpload(req.userId, body.avatar);
     if (body.avatar !== undefined)
       run("UPDATE users SET avatar = ? WHERE id = ?", body.avatar, req.userId);
     if (body.about !== undefined)

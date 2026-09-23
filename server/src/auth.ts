@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import type { FastifyRequest } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import { config } from "./config.ts";
 import { HttpError } from "./errors.ts";
 import { one } from "./db.ts";
@@ -20,6 +20,26 @@ export function verifyToken(token: string): string | null {
   } catch {
     return null;
   }
+}
+
+const mediaCookie = "rudis.media";
+
+export function setMediaCookie(req: FastifyRequest, reply: FastifyReply, token: string) {
+  const secure = req.protocol === "https" ? "; Secure" : "";
+  reply.header("Set-Cookie", `${mediaCookie}=${token}; HttpOnly; SameSite=Strict; Path=/uploads; Max-Age=2592000${secure}`);
+}
+
+export function clearMediaCookie(req: FastifyRequest, reply: FastifyReply) {
+  const secure = req.protocol === "https" ? "; Secure" : "";
+  reply.header("Set-Cookie", `${mediaCookie}=; HttpOnly; SameSite=Strict; Path=/uploads; Max-Age=0${secure}`);
+}
+
+export function mediaUserId(req: FastifyRequest): string | null {
+  const cookie = req.headers.cookie?.split(";").map((part) => part.trim())
+    .find((part) => part.startsWith(`${mediaCookie}=`));
+  const bearer = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.slice(7) : null;
+  return verifyToken(bearer ?? cookie?.slice(mediaCookie.length + 1) ?? "");
 }
 
 declare module "fastify" {
