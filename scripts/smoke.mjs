@@ -43,17 +43,25 @@ function next(socket, event, ms = 3000) {
 
 const a = await call("POST", "/api/auth/register", null, { username: `anya_${rnd}`, password: "secret123", displayName: "Аня" });
 const b = await call("POST", "/api/auth/register", null, { username: `boris_${rnd}`, password: "secret123", displayName: "Борис" });
-check(a.status === 200 && b.status === 200, "регистрация двух пользователей");
+const c = await call("POST", "/api/auth/register", null, { username: `outsider_${rnd}`, password: "secret123" });
+check(a.status === 200 && b.status === 200 && c.status === 200, "регистрация трёх пользователей");
 const dup = await call("POST", "/api/auth/register", null, { username: `anya_${rnd}`, password: "secret123" });
 check(dup.status === 409, `повторный логин отклонён: «${dup.data.error}»`);
 const bad = await call("POST", "/api/auth/login", null, { username: `anya_${rnd}`, password: "nope" });
 check(bad.status === 401, "неверный пароль отклонён");
 const TA = a.data.token;
 const TB = b.data.token;
+const TC = c.data.token;
+const secureMedia = await fetch(BASE + "/api/me", { headers: { Authorization: `Bearer ${TA}`, "X-Forwarded-Proto": "https" } });
+check(/HttpOnly.*SameSite=Strict.*Secure/.test(secureMedia.headers.get("set-cookie") ?? ""), "медиа-cookie защищён для HTTPS");
 
 const sa = await connect(TA);
 const sb = await connect(TB);
 check(sa.connected && sb.connected, "сокеты подключены");
+for (const event of ["typing", "voice:join", "voice:update", "voice:signal"])
+  sa.emit(event, null);
+await new Promise((resolve) => setTimeout(resolve, 50));
+check((await call("GET", "/api/me", TA)).status === 200, "некорректные события не роняют сервер");
 
 const srv = await call("POST", "/api/servers", TA, { name: "Тестовый сервер" });
 check(srv.status === 200 && srv.data.channels.length === 2, "сервер создан с двумя каналами");
@@ -93,6 +101,7 @@ check(edit.data.editedAt > 0, "своё сообщение отредактир�
 
 const hist = await call("GET", `/api/channels/${text.id}/messages`, TB);
 check(hist.data.length === 2 && hist.data[0].id === sent.data.id, "история по порядку");
+check((await call("GET", `/api/channels/${text.id}/messages?limit=-1`, TB)).status === 400, "отрицательный лимит истории отклонён");
 
 // Файл
 const form = new FormData();
@@ -100,10 +109,21 @@ form.append("file", new Blob(["hello"], { type: "text/plain" }), "заметка
 const up = await fetch(BASE + "/api/upload", { method: "POST", headers: { Authorization: `Bearer ${TA}` }, body: form });
 const upData = await up.json();
 check(up.status === 200 && upData.url?.startsWith("/uploads/"), "загрузка файла");
-const dl = await fetch(BASE + upData.url);
+const anonymousDownload = await fetch(BASE + upData.url);
+check(anonymousDownload.status === 404 && anonymousDownload.headers.get("cache-control")?.includes("no-store"), "аноним не может скачать файл и отказ не кэшируется");
+check((await fetch(BASE + upData.url, { headers: { Authorization: `Bearer ${TB}` } })).status === 404, "другой участник не видит ещё не отправленный файл");
+check((await call("POST", `/api/channels/${text.id}/messages`, TB, { attachments: [upData] })).status === 403, "чужой файл нельзя прикрепить к сообщению");
+const dl = await fetch(BASE + upData.url, { headers: { Authorization: `Bearer ${TA}` } });
 check(dl.headers.get("content-disposition") === "attachment", "не-медиа файл отдаётся как скачивание");
 const withFile = await call("POST", `/api/channels/${text.id}/messages`, TA, { attachments: [upData] });
 check(withFile.data.attachments?.length === 1, "сообщение с вложением");
+check((await fetch(BASE + upData.url, { headers: { Authorization: `Bearer ${TB}` } })).status === 200, "участник канала видит вложение");
+check((await fetch(BASE + upData.url, { headers: { Authorization: `Bearer ${TC}` } })).status === 404, "посторонний не видит вложение канала");
+const cookieLogin = await fetch(BASE + "/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: `boris_${rnd}`, password: "secret123" }) });
+const mediaCookie = cookieLogin.headers.get("set-cookie")?.split(";")[0];
+check(!!mediaCookie && (await fetch(BASE + upData.url, { headers: { Cookie: mediaCookie } })).status === 200, "медиа доступно с защищённой сессией браузера");
+for (let i = 0; i < 10; i++) await call("POST", "/api/auth/login", null, { username: `unknown_${rnd}`, password: "wrong" });
+check((await call("POST", "/api/auth/login", null, { username: `unknown_${rnd}`, password: "wrong" })).status === 429, "частые попытки входа ограничены");
 
 // Друзья и ЛС
 const fr = next(sb, "friends:changed");
@@ -142,6 +162,7 @@ check(kickByMember.status === 403, "участник не может выгна�
 const kicked = next(sb, "server:delete");
 await call("DELETE", `/api/servers/${srv.data.id}/members/${b.data.user.id}`, TA);
 check((await kicked).kicked === true, "исключение с сервера");
+check((await fetch(BASE + upData.url, { headers: { Authorization: `Bearer ${TB}` } })).status === 404, "исключённый участник теряет доступ к вложению");
 const del = await call("DELETE", `/api/servers/${srv.data.id}`, TA);
 check(del.status === 200, "сервер удалён");
 

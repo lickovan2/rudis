@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../auth.ts";
-import { all, one, run } from "../db.ts";
+import { all, one, run, tx } from "../db.ts";
 import { badRequest, forbidden } from "../errors.ts";
 import { newId } from "../ids.ts";
 import {
@@ -14,6 +14,7 @@ import {
 import { emitToChannel } from "../realtime.ts";
 import { parse } from "../validate.ts";
 import { config } from "../config.ts";
+import { assertOwnedUpload } from "./uploads.ts";
 
 const attachment = z.object({
   url: z.string().regex(/^\/uploads\/[\w.-]+$/),
@@ -33,7 +34,10 @@ export default async function messageRoutes(app: FastifyInstance) {
     "/api/channels/:id/messages",
     async (req) => {
       const c = requireChannel(req.params.id, req.userId);
-      const limit = Math.min(Number(req.query.limit) || config.messagePageSize, 100);
+      const requested = req.query.limit === undefined ? config.messagePageSize : Number(req.query.limit);
+      if (!Number.isInteger(requested) || requested < 1 || requested > 100)
+        throw badRequest("Лимит должен быть целым числом от 1 до 100");
+      const limit = requested;
       const rows = req.query.before
         ? all(
             "SELECT * FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
@@ -59,6 +63,7 @@ export default async function messageRoutes(app: FastifyInstance) {
     );
     const content = body.content.trim();
     if (!content && !body.attachments.length) throw badRequest("Пустое сообщение");
+    for (const file of body.attachments) assertOwnedUpload(req.userId, file.url);
     const replyTo =
       body.replyTo &&
       one("SELECT id FROM messages WHERE id = ? AND channel_id = ?", body.replyTo, c.id)
@@ -67,17 +72,15 @@ export default async function messageRoutes(app: FastifyInstance) {
 
     const id = newId();
     const now = Date.now();
-    run(
-      "INSERT INTO messages (id, channel_id, author_id, content, attachments, reply_to, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      id,
-      c.id,
-      req.userId,
-      content,
-      JSON.stringify(body.attachments),
-      replyTo,
-      now,
-    );
-    run("UPDATE channels SET last_message_at = ? WHERE id = ?", now, c.id);
+    tx(() => {
+      run(
+        "INSERT INTO messages (id, channel_id, author_id, content, attachments, reply_to, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        id, c.id, req.userId, content, JSON.stringify(body.attachments), replyTo, now,
+      );
+      for (const file of body.attachments)
+        run("INSERT OR IGNORE INTO message_uploads (message_id, url) VALUES (?, ?)", id, file.url);
+      run("UPDATE channels SET last_message_at = ? WHERE id = ?", now, c.id);
+    });
     const { message } = loadMessage(id);
     emitToChannel(c, "message:create", { ...message, serverId: c.server_id });
     return message;

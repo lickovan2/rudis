@@ -25,6 +25,7 @@ import {
 } from "../realtime.ts";
 import { parse } from "../validate.ts";
 import { uploadUrl } from "./auth.ts";
+import { assertOwnedUpload } from "./uploads.ts";
 
 interface ServerRow {
   id: string;
@@ -87,6 +88,7 @@ export default async function serverRoutes(app: FastifyInstance) {
       z.object({ name: serverName, icon: uploadUrl.nullable().optional() }),
       req.body,
     );
+    if (body.icon) assertOwnedUpload(req.userId, body.icon);
     const id = newId();
     const now = Date.now();
     tx(() => {
@@ -125,6 +127,7 @@ export default async function serverRoutes(app: FastifyInstance) {
       z.object({ name: serverName.optional(), icon: uploadUrl.nullable().optional() }),
       req.body,
     );
+    if (body.icon) assertOwnedUpload(req.userId, body.icon);
     if (body.name !== undefined)
       run("UPDATE servers SET name = ? WHERE id = ?", body.name, req.params.id);
     if (body.icon !== undefined)

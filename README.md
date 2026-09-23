@@ -63,11 +63,21 @@ npm run dist -w desktop   # desktop/dist/RUdis-<версия>-portable.exe
 | База и файлы | `/opt/rudis/data` |
 | Секреты (JWT, TURN) | `/opt/rudis/rudis.env` (600) |
 | Сервис | `rudis.service` (systemd, `127.0.0.1:3050`, лимит памяти 400 МБ), лог `/var/log/rudis.log` |
+| Резервные копии | `rudis-backup.timer` ежедневно сохраняет согласованную копию SQLite и вложения в `/opt/rudis/backups` на 14 дней |
 | TURN | `coturn.service`, `85.209.129.34:3478`, relay-порты UDP 49160–49400 |
 | nginx | vhost `gramanalyzer`: `/chart/` и `/health` → сервис графиков (8899), остальное → RUdis |
 
 Обновление: собрать `web/dist`, упаковать `git archive` + `web/dist`, распаковать в `/opt/rudis/app`,
 `npm ci --omit=dev -w server` (с `PATH=/opt/rudis/runtime/current/bin:$PATH`), `systemctl restart rudis`.
+Данные принадлежат отдельному пользователю `rudis` и недоступны другим локальным пользователям.
+Для защиты от отказа самого VPS копии из `/opt/rudis/backups` нужно дополнительно вывозить на другой хост.
+На существующем VPS вход root по паролю через SSH отключён; вход по ключу сохранён.
+
+При установке на новый VPS создайте системного пользователя `rudis`, передайте ему `/opt/rudis/data`
+и задайте для каталога права `700`, а для файлов базы и вложений `600`. В `rudis.service`
+укажите `User=rudis`, `Group=rudis` и `UMask=0077`. Установите
+`deploy/rudis-backup.service` и `deploy/rudis-backup.timer` в `/etc/systemd/system/`,
+затем выполните `systemctl daemon-reload` и `systemctl enable --now rudis-backup.timer`.
 
 ## Настройки сервера (переменные окружения)
 
@@ -79,6 +89,7 @@ npm run dist -w desktop   # desktop/dist/RUdis-<версия>-portable.exe
 | `TURN_URL` | — | Свой TURN-сервер (coturn) для голоса через сложные NAT |
 | `TURN_SECRET` | — | Общий секрет coturn (`use-auth-secret`): сервер выдаёт временные логины на сутки |
 | `TURN_USER`, `TURN_PASS` | — | Постоянные логин и пароль TURN, если секрет не используется |
+| `MAX_TOTAL_UPLOAD_BYTES` | 5 ГБ | Общий лимит загруженных файлов (отдельно 500 МБ на пользователя) |
 
 ## Голос: как устроен и ограничения
 

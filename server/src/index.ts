@@ -12,20 +12,26 @@ import messageRoutes from "./routes/messages.ts";
 import socialRoutes from "./routes/social.ts";
 import uploadRoutes, { uploadsDir } from "./routes/uploads.ts";
 import voiceRoutes from "./routes/voice.ts";
+import { authorizeUpload } from "./routes/uploads.ts";
 
-const app = Fastify({ logger: { level: "info" } });
+const app = Fastify({ logger: { level: "info" }, trustProxy: "127.0.0.1" });
 
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: config.maxUploadBytes, files: 1 } });
+app.addHook("preHandler", authorizeUpload);
+app.addHook("onSend", async (req, reply, payload) => {
+  if (req.url.startsWith("/api/")) reply.header("Cache-Control", "no-store");
+  return payload;
+});
 
 // Пользовательские файлы: запрещаем исполнять их как страницу нашего сайта.
 const inlineExt = /\.(png|jpe?g|gif|webp|avif|mp4|webm|mov|mp3|ogg|oga|wav|m4a|flac)$/i;
 await app.register(fastifyStatic, {
   root: uploadsDir,
   prefix: "/uploads/",
-  maxAge: "30d",
-  immutable: true,
   setHeaders(res, filePath) {
+    res.header("Cache-Control", "private, no-store");
+    res.header("Vary", "Cookie");
     res.header("X-Content-Type-Options", "nosniff");
     res.header("Content-Security-Policy", "sandbox; default-src 'none'");
     if (!inlineExt.test(filePath)) res.header("Content-Disposition", "attachment");
