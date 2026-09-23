@@ -82,7 +82,9 @@ export default async function authRoutes(app: FastifyInstance) {
     );
     if (body.displayName !== undefined)
       run("UPDATE users SET display_name = ? WHERE id = ?", body.displayName, req.userId);
-    if (body.avatar !== undefined)
+    // Проверяем только новую картинку: текущую аватарку клиент присылает как есть.
+    const currentAvatar = one<{ avatar: string | null }>("SELECT avatar FROM users WHERE id = ?", req.userId)?.avatar;
+    if (body.avatar !== undefined && body.avatar !== currentAvatar)
       assertOwnedUpload(req.userId, body.avatar);
     if (body.avatar !== undefined)
       run("UPDATE users SET avatar = ? WHERE id = ?", body.avatar, req.userId);
