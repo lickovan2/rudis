@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <title>RUdis — подключение</title>
+    <style>
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 15% 20%, rgba(47, 107, 255, 0.25), transparent 45%),
+          radial-gradient(circle at 85% 80%, rgba(229, 56, 59, 0.22), transparent 45%), #16171b;
+        color: #eceef3;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      form {
+        width: 420px;
+        background: #2b2c33;
+        border-radius: 12px;
+        padding: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+      }
+      h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+      p {
+        margin: 0;
+        color: #8b8f9c;
+        font-size: 14px;
+      }
+      label {
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #b6b9c4;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      input {
+        background: #16171b;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        padding: 10px 12px;
+        color: #eceef3;
+        font: inherit;
+        font-size: 15px;
+        text-transform: none;
+        font-weight: 400;
+        outline: none;
+      }
+      input:focus {
+        border-color: #2f6bff;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        flex: 1;
+        min-height: 40px;
+        border: 0;
+        border-radius: 6px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        color: #fff;
+        background: #41434d;
+      }
+      button[type="submit"] {
+        background: #2f6bff;
+      }
+      .error {
+        color: #ff9a9c;
+        font-size: 13px;
+        min-height: 1em;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="f">
+      <h1>Не удаётся подключиться</h1>
+      <p id="why">Проверьте адрес сервера RUdis и соединение с интернетом.</p>
+      <label>
+        Адрес сервера
+        <input id="url" placeholder="https://rudis.example.ru" autofocus />
+      </label>
+      <div class="error" id="err"></div>
+      <div class="row">
+        <button type="button" id="retry">Повторить</button>
+        <button type="submit">Подключиться</button>
+      </div>
+    </form>
+    <script>
+      const q = new URLSearchParams(location.search);
+      document.getElementById("url").value = q.get("url") || "";
+      if (!q.get("error")) {
+        document.querySelector("h1").textContent = "Сервер RUdis";
+        document.getElementById("why").textContent = "Укажите адрес сервера, к которому подключаться.";
+      }
+      document.getElementById("retry").onclick = () => window.rudisDesktop.retry();
+      document.getElementById("f").onsubmit = async (e) => {
+        e.preventDefault();
+        const res = await window.rudisDesktop.setServer(document.getElementById("url").value);
+        document.getElementById("err").textContent = res && res.error ? res.error : "";
+      };
+    </script>
+  </body>
+</html>

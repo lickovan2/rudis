@@ -1,0 +1,8 @@
+node_modules/
+dist/
+data/
+*.log
+.env
+data-test/
+data-test.log
+desktop/dist/

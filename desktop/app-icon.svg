@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#23252c"/>
+      <stop offset="1" stop-color="#121317"/>
+    </linearGradient>
+    <clipPath id="bubble">
+      <path d="M256 92c-104 0-188 72-188 162 0 50 26 95 68 125l-18 83 88-46c16 4 33 6 50 6 104 0 188-72 188-168S360 92 256 92z"/>
+    </clipPath>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g clip-path="url(#bubble)">
+    <rect x="0" y="80" width="512" height="130" fill="#ffffff"/>
+    <rect x="0" y="210" width="512" height="110" fill="#2f6bff"/>
+    <rect x="0" y="320" width="512" height="160" fill="#e5383b"/>
+  </g>
+</svg>

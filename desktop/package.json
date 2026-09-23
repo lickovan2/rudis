@@ -1,0 +1,37 @@
+{
+  "name": "@rudis/desktop",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "icon": "electron scripts/make-icon.cjs",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "44.4.5",
+    "electron-builder": "^26.15.3"
+  },
+  "version": "0.1.0",
+  "description": "RUdis — русский аналог Discord",
+  "author": "RUdis",
+  "build": {
+    "appId": "ru.rudis.desktop",
+    "productName": "RUdis",
+    "icon": "icon.png",
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "offline.html",
+      "icon.png"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "RUdis-${version}-portable.exe"
+    }
+  }
+}
