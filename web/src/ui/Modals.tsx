@@ -12,11 +12,15 @@ import {
   type Modal,
 } from "../store";
 import type { Channel, Member, Server, User } from "../types";
+import { DEFAULT_NOISE_MODE, noiseModes } from "../noise";
 import {
   listDevices,
   setInputDevice,
+  setNoiseMode,
   setOutputDevice,
   setUserVolume,
+  startMicTest,
+  stopMicTest,
   useVoice,
 } from "../voice";
 import { Avatar, ServerIcon } from "./Avatar";
@@ -487,7 +491,8 @@ function UserSettings() {
   const [about, setAbout] = useState(me.about);
   const [avatar, setAvatar] = useState<string | null>(me.avatar);
   const [busy, setBusy] = useState(false);
-  const { inputDeviceId, outputDeviceId } = useVoice();
+  const inputDeviceId = useVoice((s) => s.inputDeviceId);
+  const outputDeviceId = useVoice((s) => s.outputDeviceId);
   const [devices, setDevices] = useState<{ inputs: MediaDeviceInfo[]; outputs: MediaDeviceInfo[] }>({
     inputs: [],
     outputs: [],
@@ -580,6 +585,8 @@ function UserSettings() {
         </label>
       </div>
 
+      <NoiseSettings onMicReady={() => void listDevices().then(setDevices)} />
+
       <h3 className="settings-section">Уведомления</h3>
       {notif === "granted" ? (
         <p className="muted small">Уведомления о личных сообщениях и упоминаниях включены.</p>
@@ -595,6 +602,66 @@ function UserSettings() {
         </button>
       )}
     </Shell>
+  );
+}
+
+function NoiseSettings({ onMicReady }: { onMicReady: () => void }) {
+  const noiseMode = useVoice((s) => s.noiseMode);
+  const testing = useVoice((s) => s.testing);
+  const level = useVoice((s) => s.testLevel);
+  const inCall = useVoice((s) => !!s.channelId);
+
+  // Закрыли настройки — выключаем проверку, чтобы не слушать себя бесконечно.
+  useEffect(() => () => stopMicTest(), []);
+
+  return (
+    <>
+      <h3 className="settings-section">Шумоподавление</h3>
+      <div className="noise-modes" role="radiogroup" aria-label="Шумоподавление">
+        {noiseModes.map((m) => (
+          <button
+            key={m.value}
+            type="button"
+            role="radio"
+            aria-checked={noiseMode === m.value}
+            className={noiseMode === m.value ? "active" : ""}
+            onClick={() => void setNoiseMode(m.value)}
+          >
+            <span className="noise-radio" />
+            <div>
+              <b>
+                {m.label}
+                {m.value === DEFAULT_NOISE_MODE && <span className="noise-badge">рекомендуем</span>}
+              </b>
+              <span className="muted small">{m.hint}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className="mic-test">
+        <button
+          type="button"
+          className={`btn ${testing ? "danger-outline" : "secondary"}`}
+          disabled={inCall}
+          onClick={async () => {
+            if (testing) return stopMicTest();
+            await startMicTest();
+            onMicReady();
+          }}
+        >
+          {testing ? "Остановить проверку" : "Проверить микрофон"}
+        </button>
+        <div className="mic-meter" aria-hidden="true">
+          <i style={{ width: `${Math.round(level * 100)}%` }} />
+        </div>
+      </div>
+      <p className="muted small">
+        {inCall
+          ? "Во время звонка проверка недоступна — режим меняется сразу, собеседники услышат разницу."
+          : "Вы услышите себя так, как вас слышат другие. Лучше в наушниках, иначе будет эхо."}
+      </p>
+    </>
   );
 }
 
@@ -666,7 +733,7 @@ function Profile({ userId, serverId }: { userId: string; serverId?: string }) {
             <input
               type="range"
               min={0}
-              max={2}
+              max={1}
               step={0.05}
               value={volume}
               onChange={(e) => setUserVolume(userId, Number(e.target.value))}

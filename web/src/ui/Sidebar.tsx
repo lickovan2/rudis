@@ -11,7 +11,8 @@ import {
   useUser,
 } from "../store";
 import type { Channel, DmChannel, Server, VoiceMember } from "../types";
-import { joinVoice, leaveVoice, toggleDeafen, toggleMute, useVoice } from "../voice";
+import { noiseModes } from "../noise";
+import { joinVoice, leaveVoice, toggleDeafen, toggleMute, toggleNoise, useVoice } from "../voice";
 import { Avatar } from "./Avatar";
 import {
   ChevronDown,
@@ -22,6 +23,7 @@ import {
   Link,
   LogOut,
   Mic,
+  Noise,
   MicOff,
   PhoneOff,
   Plus,
@@ -295,8 +297,27 @@ function DmItem({ dm, active }: { dm: DmChannel; active: boolean }) {
 
 // --- Нижние панели ---
 
+export function NoiseButton({ className = "icon-btn", size = 20 }: { className?: string; size?: number }) {
+  const noiseMode = useVoice((s) => s.noiseMode);
+  const on = noiseMode !== "off";
+  const label = noiseModes.find((m) => m.value === noiseMode)?.label ?? "";
+  return (
+    <button
+      className={`${className}${on ? " on" : ""} noise-btn`}
+      onClick={toggleNoise}
+      data-tip={on ? `Шумоподавление: ${label}` : "Шумоподавление выключено"}
+      aria-label="Шумоподавление"
+      aria-pressed={on}
+    >
+      <Noise size={size} off={!on} />
+    </button>
+  );
+}
+
 function VoicePanel() {
-  const { channelId, serverId, status } = useVoice();
+  const channelId = useVoice((s) => s.channelId);
+  const serverId = useVoice((s) => s.serverId);
+  const status = useVoice((s) => s.status);
   const server = useStore((s) => s.servers.find((x) => x.id === serverId));
   const channel = server?.channels.find((c) => c.id === channelId);
   if (!channelId || !server) return null;
@@ -310,6 +331,7 @@ function VoicePanel() {
           {channel?.name} / {server.name}
         </span>
       </div>
+      <NoiseButton />
       <button className="icon-btn" onClick={() => leaveVoice()} data-tip="Отключиться" aria-label="Отключиться">
         <PhoneOff size={20} />
       </button>

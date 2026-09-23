@@ -2,6 +2,7 @@ import { openModal, useStore, useUser } from "../store";
 import type { Channel, Server, VoiceMember } from "../types";
 import { joinVoice, leaveVoice, toggleDeafen, toggleMute, useVoice } from "../voice";
 import { Avatar } from "./Avatar";
+import { NoiseButton } from "./Sidebar";
 import { Headphones, HeadphonesOff, Mic, MicOff, PhoneOff, Speaker } from "./icons";
 
 export function VoiceView({ channel, server }: { channel: Channel; server: Server }) {
@@ -49,6 +50,7 @@ export function VoiceView({ channel, server }: { channel: Channel; server: Serve
             >
               {voice.deafened ? <HeadphonesOff /> : <Headphones />}
             </button>
+            <NoiseButton className="round-btn big" size={24} />
             <button className="round-btn big hangup" onClick={() => leaveVoice()} data-tip="Отключиться" aria-label="Отключиться">
               <PhoneOff />
             </button>

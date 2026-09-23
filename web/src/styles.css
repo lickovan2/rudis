@@ -2025,6 +2025,94 @@ textarea {
   gap: 16px;
 }
 
+.noise-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.noise-modes button {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-elev);
+  border: 1px solid transparent;
+  text-align: left;
+}
+
+.noise-modes button:hover {
+  background: #363842;
+}
+
+.noise-modes button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.noise-modes button > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.noise-radio {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+}
+
+.noise-modes button.active .noise-radio {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--bg-modal), inset 0 0 0 9px var(--accent);
+}
+
+.noise-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--green);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  vertical-align: 2px;
+}
+
+.mic-test {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mic-meter {
+  flex: 1;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--bg-rail);
+  overflow: hidden;
+}
+
+.mic-meter i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--green), var(--yellow) 75%, var(--red));
+  transition: width 0.08s linear;
+}
+
+.noise-btn.on {
+  color: var(--green);
+}
+
+.round-btn.noise-btn.on {
+  color: var(--green);
+  background: rgba(47, 191, 113, 0.15);
+}
+
 .settings-section {
   margin: 8px 0 0;
   font-size: 13px;

@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import type { Socket } from "socket.io-client";
 import { api } from "./api";
+import {
+  DEFAULT_NOISE_MODE,
+  buildPipeline,
+  micConstraints,
+  type MicPipeline,
+  type NoiseMode,
+} from "./noise";
 import { getSocket } from "./socket";
 import { toast, useStore } from "./store";
 import type { VoiceMember } from "./types";
@@ -18,6 +25,12 @@ interface VoiceUiState {
   volume: Record<string, number>;
   // socketId -> состояние WebRTC-соединения с этим участником.
   links: Record<string, RTCPeerConnectionState>;
+  noiseMode: NoiseMode;
+  // Какой режим включать кнопкой «шумоподавление», если сейчас оно выключено.
+  noiseOnMode: NoiseMode;
+  // Проверка микрофона в настройках: слышишь себя уже после шумоподавления.
+  testing: boolean;
+  testLevel: number;
 }
 
 function loadPref(key: string, fallback: string) {
@@ -36,6 +49,12 @@ function savePref(key: string, value: string) {
   }
 }
 
+const modes: NoiseMode[] = ["off", "browser", "rnnoise", "gtcrn"];
+const prefMode = (key: string, fallback: NoiseMode): NoiseMode => {
+  const v = loadPref(key, fallback) as NoiseMode;
+  return modes.includes(v) ? v : fallback;
+};
+
 export const useVoice = create<VoiceUiState>(() => ({
   channelId: null,
   serverId: null,
@@ -47,6 +66,10 @@ export const useVoice = create<VoiceUiState>(() => ({
   outputDeviceId: loadPref("output", "default"),
   volume: {},
   links: {},
+  noiseMode: prefMode("noise", DEFAULT_NOISE_MODE),
+  noiseOnMode: prefMode("noiseOn", DEFAULT_NOISE_MODE),
+  testing: false,
+  testLevel: 0,
 }));
 
 const setV = useVoice.setState;
@@ -66,14 +89,21 @@ interface Peer {
 }
 
 const peers = new Map<string, Peer>();
-let localStream: MediaStream | null = null;
+let mic: MicPipeline | null = null;
 let stopLocalMeter: (() => void) | null = null;
 let iceServers: RTCIceServer[] = [];
 let boundSocket: Socket | null = null;
 let audioCtx: AudioContext | null = null;
 
+// 48 кГц — рабочая частота нейросетей шумоподавления.
 function ctx() {
-  audioCtx ??= new AudioContext();
+  if (!audioCtx) {
+    try {
+      audioCtx = new AudioContext({ sampleRate: 48000 });
+    } catch {
+      audioCtx = new AudioContext();
+    }
+  }
   if (audioCtx.state === "suspended") void audioCtx.resume();
   return audioCtx;
 }
@@ -112,6 +142,7 @@ function meter(stream: MediaStream, key: string): () => void {
     let sum = 0;
     for (const v of buf) sum += ((v - 128) / 128) ** 2;
     const rms = Math.sqrt(sum / buf.length);
+    if (key === "test") setV({ testLevel: Math.min(1, rms * 5) });
     const now = Date.now();
     if (rms > 0.03) lastLoud = now;
     const talking = now - lastLoud < 300 && !(key === "me" && getV().muted);
@@ -129,13 +160,18 @@ function send(to: string, data: Signal) {
   boundSocket?.emit("voice:signal", { to, data });
 }
 
-function applyOutput(audio: HTMLAudioElement) {
-  const { outputDeviceId, deafened, volume } = getV();
-  audio.muted = deafened;
-  const peer = [...peers.values()].find((p) => p.audio === audio);
-  audio.volume = peer ? (volume[peer.userId] ?? 1) : 1;
+function applySink(audio: HTMLAudioElement) {
+  const { outputDeviceId } = getV();
   const sink = (audio as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }).setSinkId;
   if (sink && outputDeviceId) sink.call(audio, outputDeviceId).catch(() => {});
+}
+
+function applyOutput(audio: HTMLAudioElement) {
+  const { deafened, volume } = getV();
+  audio.muted = deafened;
+  const peer = [...peers.values()].find((p) => p.audio === audio);
+  audio.volume = peer ? Math.min(1, volume[peer.userId] ?? 1) : 1;
+  applySink(audio);
 }
 
 function createPeer(socketId: string, userId: string): Peer {
@@ -146,7 +182,7 @@ function createPeer(socketId: string, userId: string): Peer {
   peers.set(socketId, peer);
   applyOutput(audio);
 
-  localStream?.getTracks().forEach((t) => pc.addTrack(t, localStream!));
+  mic?.stream.getTracks().forEach((t) => pc.addTrack(t, mic!.stream));
 
   pc.onicecandidate = (e) => {
     if (e.candidate) send(socketId, { type: "ice", candidate: e.candidate.toJSON() });
@@ -234,17 +270,64 @@ function unbindSocket() {
   boundSocket = null;
 }
 
-async function getMic(): Promise<MediaStream> {
-  const { inputDeviceId } = getV();
-  return navigator.mediaDevices.getUserMedia({
-    audio: {
-      deviceId: inputDeviceId && inputDeviceId !== "default" ? { ideal: inputDeviceId } : undefined,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
+function micError(e: unknown) {
+  const name = (e as DOMException).name;
+  return name === "NotAllowedError"
+    ? "Нет доступа к микрофону — разрешите его в настройках браузера"
+    : name === "NotFoundError"
+      ? "Микрофон не найден"
+      : (e as Error).message;
+}
+
+/** Открывает микрофон и пропускает его через выбранное шумоподавление. */
+async function openMic(): Promise<MicPipeline> {
+  const { noiseMode, inputDeviceId } = getV();
+  const raw = await navigator.mediaDevices.getUserMedia({
+    audio: micConstraints(noiseMode, inputDeviceId),
     video: false,
   });
+  try {
+    return await buildPipeline(ctx(), raw, noiseMode);
+  } catch (e) {
+    // Нет AudioWorklet или не скачалась модель — не оставляем человека без голоса.
+    console.warn("Шумоподавление недоступно:", e);
+    toast("Не удалось включить нейросетевое шумоподавление — работает стандартное", "info");
+    raw.getTracks().forEach((t) => t.stop());
+    const fallback = await navigator.mediaDevices.getUserMedia({
+      audio: micConstraints("browser", inputDeviceId),
+      video: false,
+    });
+    return buildPipeline(ctx(), fallback, "browser");
+  }
+}
+
+let swapSeq = 0;
+
+// Меняем микрофон или режим шумоподавления на лету, не переподключаясь к собеседникам.
+async function swapMic() {
+  if (!mic) return;
+  const seq = ++swapSeq;
+  let fresh: MicPipeline;
+  try {
+    fresh = await openMic();
+  } catch (e) {
+    toast(micError(e));
+    return;
+  }
+  if (!mic || seq !== swapSeq) {
+    fresh.dispose();
+    return;
+  }
+  const track = fresh.stream.getAudioTracks()[0];
+  for (const p of peers.values()) {
+    const sender = p.pc.getSenders().find((s) => s.track?.kind === "audio");
+    await sender?.replaceTrack(track);
+  }
+  stopLocalMeter?.();
+  mic.dispose();
+  mic = fresh;
+  stopLocalMeter = meter(fresh.stream, "me");
+  applyMute();
 }
 
 export async function joinVoice(channelId: string, serverId: string, rejoin = false) {
@@ -256,23 +339,17 @@ export async function joinVoice(channelId: string, serverId: string, rejoin = fa
 
   setV({ channelId, serverId, status: "connecting" });
   try {
-    if (!localStream) {
-      localStream = await getMic();
-      stopLocalMeter = meter(localStream, "me");
+    if (getV().testing) stopMicTest();
+    if (!mic) {
+      mic = await openMic();
+      stopLocalMeter = meter(mic.stream, "me");
     }
     applyMute();
     if (!iceServers.length)
       iceServers = (await api<{ iceServers: RTCIceServer[] }>("GET", "/api/voice/config")).iceServers;
   } catch (e) {
     teardown();
-    const name = (e as DOMException).name;
-    toast(
-      name === "NotAllowedError"
-        ? "Нет доступа к микрофону — разрешите его в настройках браузера"
-        : name === "NotFoundError"
-          ? "Микрофон не найден"
-          : (e as Error).message,
-    );
+    toast(micError(e));
     return;
   }
 
@@ -306,8 +383,8 @@ function teardown() {
   for (const id of [...peers.keys()]) closePeer(id);
   stopLocalMeter?.();
   stopLocalMeter = null;
-  localStream?.getTracks().forEach((t) => t.stop());
-  localStream = null;
+  mic?.dispose();
+  mic = null;
   unbindSocket();
   setV({ channelId: null, serverId: null, status: "idle", speaking: {}, links: {} });
 }
@@ -321,7 +398,7 @@ export function leaveVoice(silent = false) {
 
 function applyMute() {
   const { muted, deafened } = getV();
-  localStream?.getAudioTracks().forEach((t) => (t.enabled = !muted && !deafened));
+  mic?.stream.getAudioTracks().forEach((t) => (t.enabled = !muted && !deafened));
   for (const p of peers.values()) applyOutput(p.audio);
 }
 
@@ -349,29 +426,73 @@ export function setUserVolume(userId: string, value: number) {
   for (const p of peers.values()) if (p.userId === userId) applyOutput(p.audio);
 }
 
+async function refreshMic() {
+  await swapMic();
+  if (getV().testing) await startMicTest();
+}
+
 export async function setInputDevice(deviceId: string) {
   setV({ inputDeviceId: deviceId });
   savePref("input", deviceId);
-  if (!localStream) return;
-  // Меняем микрофон на лету, не переподключаясь.
-  const fresh = await getMic().catch(() => null);
-  if (!fresh) return toast("Не удалось открыть выбранный микрофон");
-  const track = fresh.getAudioTracks()[0];
-  for (const p of peers.values()) {
-    const sender = p.pc.getSenders().find((s) => s.track?.kind === "audio");
-    await sender?.replaceTrack(track);
-  }
-  stopLocalMeter?.();
-  localStream.getTracks().forEach((t) => t.stop());
-  localStream = fresh;
-  stopLocalMeter = meter(fresh, "me");
-  applyMute();
+  await refreshMic();
+}
+
+export async function setNoiseMode(mode: NoiseMode) {
+  if (getV().noiseMode === mode) return;
+  setV(mode === "off" ? { noiseMode: mode } : { noiseMode: mode, noiseOnMode: mode });
+  savePref("noise", mode);
+  if (mode !== "off") savePref("noiseOn", mode);
+  await refreshMic();
+}
+
+/** Кнопка в голосовой панели: выключить шумоподавление или вернуть последний режим. */
+export function toggleNoise() {
+  const { noiseMode, noiseOnMode } = getV();
+  void setNoiseMode(noiseMode === "off" ? (noiseOnMode === "off" ? DEFAULT_NOISE_MODE : noiseOnMode) : "off");
 }
 
 export function setOutputDevice(deviceId: string) {
   setV({ outputDeviceId: deviceId });
   savePref("output", deviceId);
   for (const p of peers.values()) applyOutput(p.audio);
+  if (test) applySink(test.audio);
+}
+
+// --- Проверка микрофона ---
+
+let test: { pipeline: MicPipeline; audio: HTMLAudioElement; stopMeter: () => void } | null = null;
+let testSeq = 0;
+
+function disposeTest() {
+  if (!test) return;
+  test.stopMeter();
+  test.audio.srcObject = null;
+  test.pipeline.dispose();
+  test = null;
+}
+
+export async function startMicTest() {
+  const seq = ++testSeq;
+  disposeTest();
+  setV({ testing: true, testLevel: 0 });
+  try {
+    const pipeline = await openMic();
+    if (seq !== testSeq || !getV().testing) return pipeline.dispose();
+    const audio = new Audio();
+    audio.srcObject = pipeline.stream;
+    applySink(audio);
+    void audio.play().catch(() => {});
+    test = { pipeline, audio, stopMeter: meter(pipeline.stream, "test") };
+  } catch (e) {
+    setV({ testing: false, testLevel: 0 });
+    toast(micError(e));
+  }
+}
+
+export function stopMicTest() {
+  testSeq++;
+  disposeTest();
+  setV({ testing: false, testLevel: 0 });
 }
 
 export async function listDevices() {
@@ -388,7 +509,10 @@ export async function listDevices() {
 
 // Вышли из аккаунта — выходим и из голоса.
 useStore.subscribe((s, prev) => {
-  if (prev.me && !s.me) leaveVoice(true);
+  if (prev.me && !s.me) {
+    leaveVoice(true);
+    stopMicTest();
+  }
 });
 
 window.addEventListener("beforeunload", () => leaveVoice(true));

@@ -161,6 +161,14 @@ export const Check = (p: P) => (
   </Svg>
 );
 
+/** Шумоподавление: звуковая волна; перечёркнутая — выключено. */
+export const Noise = ({ off, ...p }: P & { off?: boolean }) => (
+  <Svg {...p}>
+    <path d="M2 12h2M6 8v8M10 4v16M14 7v10M18 10v4M22 12h0" />
+    {off && <path d="m3 3 18 18" />}
+  </Svg>
+);
+
 /** Логотип RUdis: пузырь чата в цветах триколора. */
 export function Logo({ size = 28 }: { size?: number }) {
   return (
