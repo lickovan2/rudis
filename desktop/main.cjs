@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, session, shell, Menu } = require("electron"
 const fs = require("node:fs");
 const path = require("node:path");
 
-const DEFAULT_URL = "http://localhost:3001";
+const DEFAULT_URL = "https://gramanalyzer.xyz";
 
 const configPath = () => path.join(app.getPath("userData"), "config.json");
 
