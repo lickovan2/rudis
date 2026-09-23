@@ -22,13 +22,15 @@
       "main.cjs",
       "preload.cjs",
       "offline.html",
-      "icon.png"
+      "icon.png",
+      "icon.ico"
     ],
     "directories": {
       "output": "dist"
     },
     "win": {
-      "target": "portable"
+      "target": "portable",
+      "icon": "icon.ico"
     },
     "portable": {
       "artifactName": "RUdis-${version}-portable.exe"
