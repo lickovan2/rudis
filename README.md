@@ -50,7 +50,24 @@ npm start          # сервер отдаёт API, WebSocket и собранн�
 npm run dist -w desktop   # desktop/dist/RUdis-<версия>-portable.exe
 ```
 
-При первом запуске клиент подключается к `http://localhost:3001`. Адрес сервера меняется через меню «RUdis → Сменить сервер…».
+При первом запуске клиент подключается к `https://gramanalyzer.xyz`. Адрес сервера меняется через меню «RUdis → Сменить сервер…».
+
+## Продакшен: https://gramanalyzer.xyz
+
+Развёрнуто на VPS рядом с другими проектами, изолированно:
+
+| Что | Где |
+| --- | --- |
+| Код | `/opt/rudis/app` |
+| Свой Node 24 (системный Node не трогаем) | `/opt/rudis/runtime/current` |
+| База и файлы | `/opt/rudis/data` |
+| Секреты (JWT, TURN) | `/opt/rudis/rudis.env` (600) |
+| Сервис | `rudis.service` (systemd, `127.0.0.1:3050`, лимит памяти 400 МБ), лог `/var/log/rudis.log` |
+| TURN | `coturn.service`, `85.209.129.34:3478`, relay-порты UDP 49160–49400 |
+| nginx | vhost `gramanalyzer`: `/chart/` и `/health` → сервис графиков (8899), остальное → RUdis |
+
+Обновление: собрать `web/dist`, упаковать `git archive` + `web/dist`, распаковать в `/opt/rudis/app`,
+`npm ci --omit=dev -w server` (с `PATH=/opt/rudis/runtime/current/bin:$PATH`), `systemctl restart rudis`.
 
 ## Настройки сервера (переменные окружения)
 
@@ -59,7 +76,9 @@ npm run dist -w desktop   # desktop/dist/RUdis-<версия>-portable.exe
 | `PORT` | `3001` | Порт HTTP и WebSocket |
 | `JWT_SECRET` | dev-значение | **Обязательно поменять в продакшене** |
 | `DATA_DIR` | `./data` | База SQLite и загруженные файлы |
-| `TURN_URL`, `TURN_USER`, `TURN_PASS` | — | Свой TURN-сервер (coturn) для голоса через сложные NAT |
+| `TURN_URL` | — | Свой TURN-сервер (coturn) для голоса через сложные NAT |
+| `TURN_SECRET` | — | Общий секрет coturn (`use-auth-secret`): сервер выдаёт временные логины на сутки |
+| `TURN_USER`, `TURN_PASS` | — | Постоянные логин и пароль TURN, если секрет не используется |
 
 ## Голос: как устроен и ограничения
 
