@@ -335,7 +335,7 @@ function bindSocket() {
     const active = s.route.channelId === m.channelId && !document.hidden;
     if (!mine && !active) {
       set((st) => ({ unread: { ...st.unread, [m.channelId]: (st.unread[m.channelId] ?? 0) + 1 } }));
-      const mentioned = s.me && m.content.includes(`@${s.me.username}`);
+      const mentioned = s.me && m.content.toLowerCase().includes(`@${s.me.username.toLowerCase()}`);
       if (!m.serverId || mentioned)
         notify(m.author.displayName, m.content || (m.attachments.length ? "📎 Вложение" : ""));
     }

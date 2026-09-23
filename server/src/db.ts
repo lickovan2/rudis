@@ -95,6 +95,24 @@ CREATE TABLE IF NOT EXISTS friendships (
 );
 `);
 
+/**
+ * Ключ логина для сравнения без учёта регистра. COLLATE NOCASE в SQLite понимает только латиницу,
+ * поэтому нормализуем в JS; «ё» приравниваем к «е», чтобы не было двойников «Алёна»/«Алена».
+ */
+export function usernameKey(username: string): string {
+  return username.trim().toLowerCase().replace(/ё/g, "е");
+}
+
+// Миграция: колонка username_key для баз, созданных до поддержки кириллицы.
+const userColumns = db.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+if (!userColumns.some((c) => c.name === "username_key")) {
+  db.exec("ALTER TABLE users ADD COLUMN username_key TEXT");
+  const update = db.prepare("UPDATE users SET username_key = ? WHERE id = ?");
+  for (const u of db.prepare("SELECT id, username FROM users").all() as { id: string; username: string }[])
+    update.run(usernameKey(u.username), u.id);
+}
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_username_key ON users(username_key)");
+
 type Row = Record<string, any>;
 
 export function one<T = Row>(sql: string, ...params: any[]): T | undefined {

@@ -63,7 +63,9 @@ export const MessageItem = memo(function MessageItem(p: Props) {
   const m = p.message;
   const author = useUser(m.author);
   const meId = useStore((s) => s.me!.id);
-  const mentionsMe = useStore((s) => !!s.me && m.content.includes(`@${s.me.username}`));
+  const mentionsMe = useStore(
+    (s) => !!s.me && m.content.toLowerCase().includes(`@${s.me.username.toLowerCase()}`),
+  );
   const [picker, setPicker] = useState(false);
 
   return (

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { checkPassword, hashPassword, requireAuth, signToken } from "../auth.ts";
-import { one, run } from "../db.ts";
+import { one, run, usernameKey } from "../db.ts";
 import { HttpError } from "../errors.ts";
 import { newId } from "../ids.ts";
 import { getUser, publicUser, type UserRow } from "../access.ts";
@@ -16,7 +16,7 @@ const credentials = z.object({
     .trim()
     .min(3, "Логин — минимум 3 символа")
     .max(32, "Логин — максимум 32 символа")
-    .regex(/^[a-zA-Z0-9_.]+$/, "Логин: только латиница, цифры, _ и ."),
+    .regex(/^[a-zA-Zа-яА-ЯёЁ0-9_.]+$/, "Логин: буквы (русские или латинские), цифры, _ и . — без пробелов"),
   password: z.string().min(6, "Пароль — минимум 6 символов").max(128),
 });
 
@@ -26,13 +26,14 @@ export default async function authRoutes(app: FastifyInstance) {
       credentials.extend({ displayName: z.string().trim().max(32).optional() }),
       req.body,
     );
-    if (one("SELECT 1 FROM users WHERE username = ?", body.username))
+    if (one("SELECT 1 FROM users WHERE username_key = ?", usernameKey(body.username)))
       throw new HttpError(409, "Такой логин уже занят");
     const id = newId();
     run(
-      "INSERT INTO users (id, username, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO users (id, username, username_key, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       id,
       body.username,
+      usernameKey(body.username),
       body.displayName || body.username,
       await hashPassword(body.password),
       Date.now(),
@@ -43,8 +44,8 @@ export default async function authRoutes(app: FastifyInstance) {
   app.post("/api/auth/login", async (req) => {
     const body = parse(z.object({ username: z.string(), password: z.string() }), req.body);
     const u = one<UserRow & { password_hash: string }>(
-      "SELECT * FROM users WHERE username = ?",
-      body.username.trim(),
+      "SELECT * FROM users WHERE username_key = ?",
+      usernameKey(body.username.replace(/^@/, "")),
     );
     if (!u || !(await checkPassword(body.password, u.password_hash)))
       throw new HttpError(401, "Неверный логин или пароль");

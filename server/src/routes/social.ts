@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../auth.ts";
-import { all, one, run, tx } from "../db.ts";
+import { all, one, run, tx, usernameKey } from "../db.ts";
 import { badRequest, notFound } from "../errors.ts";
 import { newId } from "../ids.ts";
 import { getChannel, serializeDm, usersByIds, type ChannelRow } from "../access.ts";
@@ -47,7 +47,7 @@ export default async function socialRoutes(app: FastifyInstance) {
 
   app.post("/api/friends", async (req) => {
     const body = parse(z.object({ username: z.string().trim().min(1, "Введите логин") }), req.body);
-    const target = one<{ id: string }>("SELECT id FROM users WHERE username = ?", body.username);
+    const target = one<{ id: string }>("SELECT id FROM users WHERE username_key = ?", usernameKey(body.username.replace(/^@/, "")));
     if (!target) throw notFound("Пользователь с таким логином не найден");
     if (target.id === req.userId) throw badRequest("Нельзя добавить в друзья самого себя");
     const existing = relation(req.userId, target.id);
